@@ -42,6 +42,32 @@ const CHANNEL_SECRET = "fbdee107-eb6b-47d5-ba86-0aaa8a41b813";
 const STORAGE_URL = "https://store.zapier.com/api/records";
 const MAX_LABELS_PER_MR = 10;
 
+// --- Workaround: Zapier censors "secrets" in string outputs ---------------
+//
+// Zapier replaces any substring that matches a registered secret (auth
+// credentials, env vars, etc.) with a marker of the shape
+//   :censored:<length>:<hash>:
+// where <length> is the original string's length and <hash> is a stable
+// fingerprint Zapier derives from the secret.
+//
+// In our case "gitlab.com" is registered as part of a GitLab auth credential
+// elsewhere in the Zap, so every MR URL we'd post to Storage arrives as
+//   https://:censored:10:134f110505:/zapier/team-integrations/.../merge_requests/241
+// which obviously doesn't open in a browser when the menu-bar app clicks it.
+//
+// Fix: substitute the marker back to the real host before we POST. The
+// hostname is not actually a secret — it's the public hostname of the
+// SaaS GitLab — so committing it here is fine.
+//
+// If Zapier ever changes their hashing, this marker will stop matching and
+// URLs will start arriving censored again. The fix is to update CENSORED_HOST
+// to the new marker shown in the Storage payload.
+const GITLAB_HOST = "gitlab.com";
+const CENSORED_HOST = ":censored:10:134f110505:";
+
+const unCensor = (s) =>
+  typeof s === "string" ? s.split(CENSORED_HOST).join(GITLAB_HOST) : s;
+
 const { gitlab = "[]", timestamp } = inputData;
 
 let mrs;
@@ -58,10 +84,10 @@ if (!Array.isArray(mrs)) {
 // Storage by Zapier never balloons with payload we'll never use.
 const slim = mrs.map((mr) => ({
   title: String(mr.title ?? ""),
-  url: String(mr.web_url ?? ""),
+  url: unCensor(String(mr.web_url ?? "")),
   project: String((mr.references && mr.references.full) ?? ""),
   author: String((mr.author && mr.author.username) ?? ""),
-  author_url: String((mr.author && mr.author.web_url) ?? ""),
+  author_url: unCensor(String((mr.author && mr.author.web_url) ?? "")),
   updated_at: mr.updated_at ?? null,
   created_at: mr.created_at ?? null,
   labels: Array.isArray(mr.labels) ? mr.labels.slice(0, MAX_LABELS_PER_MR) : [],
