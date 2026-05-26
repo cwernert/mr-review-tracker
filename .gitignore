@@ -1,0 +1,5 @@
+/mr-review-tracker
+/dist/
+/build/
+.DS_Store
+*.swp
