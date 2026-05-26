@@ -11,9 +11,16 @@ import (
 const (
 	appDirName        = "mr-review-tracker"
 	configFileName    = "config.json"
-	defaultChannelID  = "fbdee107-eb6b-47d5-ba86-0aaa8a41b813"
-	defaultPollSecs   = 30
-	minPollSecs       = 5
+	defaultChannelID = "fbdee107-eb6b-47d5-ba86-0aaa8a41b813"
+	// defaultPollSecs is what new installs (and any config below minPollSecs)
+	// snap to. 10 minutes is a sane MR-review-pacing default: not so frequent
+	// it hammers the API, frequent enough to catch urgent reviews within a
+	// stand-up window.
+	defaultPollSecs = 600
+	// minPollSecs is the floor accepted by SetPollSeconds + normalize. Matches
+	// the smallest option in pollIntervalChoices (1 minute). Anything below
+	// snaps up to defaultPollSecs.
+	minPollSecs       = 60
 	storageURLPattern = "https://store.zapier.com/api/records?secret=%s"
 )
 

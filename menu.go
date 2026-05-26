@@ -45,12 +45,13 @@ var pollIntervalChoices = []struct {
 	label string
 	secs  int
 }{
-	{"5 seconds", 5},
-	{"10 seconds", 10},
-	{"30 seconds", 30},
 	{"1 minute", 60},
-	{"5 minutes", 300},
-	{"15 minutes", 900},
+	{"10 minutes", 600},
+	{"30 minutes", 1800},
+	{"1 hour", 3600},
+	{"3 hours", 10800},
+	{"6 hours", 21600},
+	{"24 hours", 86400},
 }
 
 // BuildMenu builds the static menu skeleton and wires up the click handlers.
