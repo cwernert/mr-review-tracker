@@ -65,7 +65,7 @@ const slim = mrs.map((mr) => ({
   updated_at: mr.updated_at ?? null,
   created_at: mr.created_at ?? null,
   labels: Array.isArray(mr.labels) ? mr.labels.slice(0, MAX_LABELS_PER_MR) : [],
-  draft: Boolean(mr.draft ?? mr.work_in_progress),
+  draft: Boolean(mr.draft || mr.work_in_progress),
 }));
 
 const payload = {
