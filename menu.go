@@ -2,47 +2,45 @@ package main
 
 import (
 	"os/exec"
-	"strings"
 	"sync"
+	"time"
 
 	"github.com/getlantern/systray"
 )
 
 const (
-	defaultBarTitle  = "MR Review Tracker"
-	maxContentSlots  = 50 // pre-allocated submenu lines; extras are hidden until needed
-	separatorPattern = "─────────"
+	defaultBarTitle = "MR Review Tracker"
+	maxMRSlots      = 50 // pre-allocated slots; extras are hidden when there are fewer open MRs
 )
 
-// contentSlot represents one pre-allocated submenu item we can repurpose at runtime.
-type contentSlot struct {
+// mrSlot is one pre-allocated menu item we repurpose on each refresh to render
+// an MR. We can't add or remove items from the systray menu at runtime, so we
+// allocate up front and hide/show as needed.
+type mrSlot struct {
 	item *systray.MenuItem
 	url  string
 }
 
-// Menu owns the systray menu items and the goroutine plumbing to keep them in sync
-// with config + storage.
+// Menu owns the systray menu items and the synchronisation around updating
+// them from the polling goroutine.
 type Menu struct {
 	cfg *Config
 
-	statusItem *systray.MenuItem
-	slots      []*contentSlot
+	mrSlots     []*mrSlot
+	emptyItem   *systray.MenuItem // shown for empty list, loading, or error
+	fetchedItem *systray.MenuItem // disabled "Last fetched: ..." line
 
 	intervalParent *systray.MenuItem
 	intervalItems  []intervalChoice
 
-	mu          sync.Mutex
-	currentBar  string
-	pollSeconds int
+	mu sync.Mutex
 }
 
 type intervalChoice struct {
-	label string
-	secs  int
-	item  *systray.MenuItem
+	secs int
+	item *systray.MenuItem
 }
 
-// pollIntervalChoices is shown as a submenu under "Set polling interval".
 var pollIntervalChoices = []struct {
 	label string
 	secs  int
@@ -55,25 +53,21 @@ var pollIntervalChoices = []struct {
 	{"15 minutes", 900},
 }
 
-// BuildMenu creates the static menu structure once and wires up the action
-// channels. The returned Menu can then be updated with ApplyPayload / SetError.
-func BuildMenu(cfg *Config, refreshNow func(), onChangeChannel func(), onSetInterval func(int), onQuit func()) *Menu {
-	m := &Menu{cfg: cfg, slots: make([]*contentSlot, 0, maxContentSlots)}
+// BuildMenu builds the static menu skeleton and wires up the click handlers.
+// The resulting Menu can then be updated via ApplyPayload / SetError as new
+// data arrives.
+func BuildMenu(cfg *Config, refreshNow, onChangeChannel func(), onSetInterval func(int), onQuit func()) *Menu {
+	m := &Menu{cfg: cfg, mrSlots: make([]*mrSlot, 0, maxMRSlots)}
 
 	systray.SetTitle(defaultBarTitle)
-	systray.SetTooltip("Reviews waiting on you, courtesy of Zapier Storage")
+	systray.SetTooltip("Open merge requests, courtesy of Storage by Zapier")
 
-	m.statusItem = systray.AddMenuItem("Loading…", "Current status")
-	m.statusItem.Disable()
-
-	systray.AddSeparator()
-
-	for i := 0; i < maxContentSlots; i++ {
+	for i := 0; i < maxMRSlots; i++ {
 		it := systray.AddMenuItem("", "")
 		it.Hide()
-		slot := &contentSlot{item: it}
-		m.slots = append(m.slots, slot)
-		go func(s *contentSlot) {
+		slot := &mrSlot{item: it}
+		m.mrSlots = append(m.mrSlots, slot)
+		go func(s *mrSlot) {
 			for range s.item.ClickedCh {
 				if s.url != "" {
 					_ = exec.Command("open", s.url).Start()
@@ -81,6 +75,12 @@ func BuildMenu(cfg *Config, refreshNow func(), onChangeChannel func(), onSetInte
 			}
 		}(slot)
 	}
+
+	m.emptyItem = systray.AddMenuItem("Loading…", "")
+	m.emptyItem.Disable()
+
+	m.fetchedItem = systray.AddMenuItem("Last fetched: never", "")
+	m.fetchedItem.Disable()
 
 	systray.AddSeparator()
 
@@ -104,7 +104,7 @@ func BuildMenu(cfg *Config, refreshNow func(), onChangeChannel func(), onSetInte
 	for _, choice := range pollIntervalChoices {
 		c := choice
 		it := m.intervalParent.AddSubMenuItem(c.label, "")
-		m.intervalItems = append(m.intervalItems, intervalChoice{label: c.label, secs: c.secs, item: it})
+		m.intervalItems = append(m.intervalItems, intervalChoice{secs: c.secs, item: it})
 		go func(secs int) {
 			for range it.ClickedCh {
 				onSetInterval(secs)
@@ -140,68 +140,59 @@ func BuildMenu(cfg *Config, refreshNow func(), onChangeChannel func(), onSetInte
 	return m
 }
 
-// ApplyPayload fills the bar title + content slots from a fetched payload.
-// Lines starting with `---` become visual dividers; lines containing
-// ` | href=URL ` (or `url=URL`) become clickable items that open in the browser.
+// ApplyPayload renders the MR list, updates the bar title with severity hints,
+// and refreshes the "Last fetched" footer.
 func (m *Menu) ApplyPayload(p *Payload) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	bar, _, _, _ := parseLine(p.Title)
-	bar = stripMarkdownEmphasis(bar)
-	if bar == "" {
-		bar = defaultBarTitle
-	}
-	systray.SetTitle(bar)
-	m.currentBar = bar
+	now := time.Now()
 
-	if p.Name != "" {
-		m.statusItem.SetTitle(p.Name)
-	} else {
-		m.statusItem.SetTitle(bar)
-	}
+	systray.SetTitle(barTitle(p.MRs, now))
 
-	lines := splitLines(p.Content)
 	used := 0
-	for _, line := range lines {
-		if used >= len(m.slots) {
+	for _, mr := range p.MRs {
+		if used >= len(m.mrSlots) {
 			break
 		}
-		text, url, isDivider, skip := parseLine(line)
-		if skip {
-			continue
-		}
-		slot := m.slots[used]
+		slot := m.mrSlots[used]
 		used++
-		slot.url = url
-		if isDivider {
-			slot.item.SetTitle(separatorPattern)
-			slot.item.Disable()
+		slot.url = mr.URL
+		slot.item.SetTitle(mr.MenuTitle(now))
+		slot.item.SetTooltip(mr.Tooltip(now))
+		if mr.URL != "" {
+			slot.item.Enable()
 		} else {
-			slot.item.SetTitle(text)
-			if url != "" {
-				slot.item.Enable()
-				slot.item.SetTooltip(url)
-			} else {
-				slot.item.Disable()
-				slot.item.SetTooltip("")
-			}
+			slot.item.Disable()
 		}
 		slot.item.Show()
 	}
-	for i := used; i < len(m.slots); i++ {
-		m.slots[i].item.Hide()
-		m.slots[i].url = ""
+	for i := used; i < len(m.mrSlots); i++ {
+		m.mrSlots[i].item.Hide()
+		m.mrSlots[i].url = ""
 	}
+
+	if used == 0 {
+		m.emptyItem.SetTitle("No open MRs 🎉")
+		m.emptyItem.Show()
+	} else {
+		m.emptyItem.Hide()
+	}
+
+	m.fetchedItem.SetTitle("Last fetched: " + formatFetched(p.FetchedAt))
 }
 
-// SetError surfaces an error in the menu without crashing the app.
+// SetError hides the MR list and surfaces the error in the empty-state slot.
+// Leaves "Last fetched" untouched so the user can still see when the most
+// recent successful fetch happened.
 func (m *Menu) SetError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	systray.SetTitle("⚠️ MR Review Tracker")
-	m.statusItem.SetTitle("Error: " + truncate(err.Error(), 80))
-	for _, s := range m.slots {
+	m.emptyItem.SetTitle("Error: " + truncate(err.Error(), 80))
+	m.emptyItem.Show()
+	for _, s := range m.mrSlots {
 		s.item.Hide()
 		s.url = ""
 	}
@@ -209,7 +200,6 @@ func (m *Menu) SetError(err error) {
 
 // SyncIntervalCheckmarks ticks whichever interval matches the current poll seconds.
 func (m *Menu) SyncIntervalCheckmarks(secs int) {
-	m.pollSeconds = secs
 	for _, c := range m.intervalItems {
 		if c.secs == secs {
 			c.item.Check()
@@ -219,70 +209,9 @@ func (m *Menu) SyncIntervalCheckmarks(secs int) {
 	}
 }
 
-func splitLines(s string) []string {
-	if s == "" {
-		return nil
+func formatFetched(t time.Time) string {
+	if t.IsZero() {
+		return "never"
 	}
-	raw := strings.Split(s, "\n")
-	out := make([]string, 0, len(raw))
-	for _, line := range raw {
-		out = append(out, strings.TrimRight(line, "\r"))
-	}
-	return out
-}
-
-// stripMarkdownEmphasis removes `**bold**` / `*italic*` / `__underline__` markers
-// since the systray library renders titles as plain text.
-func stripMarkdownEmphasis(s string) string {
-	for _, marker := range []string{"**", "__", "*", "_"} {
-		s = strings.ReplaceAll(s, marker, "")
-	}
-	return strings.TrimSpace(s)
-}
-
-// parseLine pulls a clickable URL out of a SwiftBar-flavoured line.
-//
-// Examples accepted:
-//
-//	"Open Cursor | href=https://cursor.com" -> ("Open Cursor", "https://cursor.com", false, false)
-//	"---"                                   -> ("", "", true, false)
-//	""                                      -> ("", "", false, true) // skip
-//
-// Any unknown ` key=value ` parameters are stripped from the visible label.
-func parseLine(line string) (text, url string, divider, skip bool) {
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" {
-		return "", "", false, true
-	}
-	if strings.HasPrefix(trimmed, "---") {
-		return "", "", true, false
-	}
-
-	// Strip leading SwiftBar indentation markers ("--", "----", etc.).
-	for strings.HasPrefix(trimmed, "--") {
-		trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "--"))
-	}
-
-	parts := strings.SplitN(trimmed, "|", 2)
-	text = stripMarkdownEmphasis(strings.TrimSpace(parts[0]))
-	if len(parts) == 2 {
-		for _, kv := range strings.Fields(parts[1]) {
-			eq := strings.IndexByte(kv, '=')
-			if eq <= 0 {
-				continue
-			}
-			key := strings.ToLower(kv[:eq])
-			val := strings.Trim(kv[eq+1:], `"'`)
-			if key == "href" || key == "url" {
-				url = val
-			}
-		}
-	}
-	if text == "" {
-		text = url
-	}
-	if text == "" {
-		return "", "", false, true
-	}
-	return text, url, false, false
+	return t.Local().Format("Mon 15:04:05 MST")
 }

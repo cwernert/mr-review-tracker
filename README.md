@@ -78,29 +78,57 @@ The current interval is shown with a checkmark. Click "Refresh now" to force an 
 
 ### Populating the Channel with content
 
-The app reads from `https://store.zapier.com/api/records?secret=<UUID>` and expects a JSON object with these keys:
+The app reads from `https://store.zapier.com/api/records?secret=<UUID>` and expects a JSON object matching the schema below. The reference producer that emits it lives in [`zap/produce-storage.js`](zap/produce-storage.js) — see [zap/README.md](zap/README.md) for how to update it. That code is checked in but **not** compiled into the binary; it's there so the producer (running in Zapier's cloud) is versioned alongside the consumer (`storage.go`).
+
+#### Storage schema
 
 ```json
 {
-  "title":   "MRs: 0",
-  "name":    "Integrations MR Reviews",
-  "content": "Last updated: 2026-05-26T00:51:43+00:00\n---\nOpen dashboard | href=https://gitlab.com/dashboard/merge_requests"
+  "v": 1,
+  "fetched_at": "2026-05-26T00:51:43+00:00",
+  "mrs": [
+    {
+      "title":      "Fix the broken auth handshake",
+      "url":        "https://gitlab.com/grp/proj/-/merge_requests/123",
+      "project":    "grp/proj!123",
+      "author":     "alice",
+      "author_url": "https://gitlab.com/alice",
+      "updated_at": "2026-05-25T08:00:00+00:00",
+      "created_at": "2026-05-23T08:00:00+00:00",
+      "labels":     ["asap-review", "backend"],
+      "draft":      false
+    }
+  ]
 }
 ```
 
-For backwards compatibility with existing SwiftBar Zaps, the legacy `swiftbar_title`, `swiftbar_name`, and `swiftbar_content` keys are also supported.
-
-`content` is split on newlines:
-
-| Pattern in a content line | Effect |
+| Field | Used for |
 |---|---|
-| `text` | plain disabled menu item |
-| `text \| href=URL` (or `url=`) | clickable item that opens the URL in your default browser |
-| `---` (or longer) | visual divider |
-| `**bold**`, `_italic_` markers | stripped (the menu bar renders plain text) |
-| any other ` key=value ` parameters | ignored |
+| `v` | Wire-format version; the app errors out in the menu (`storage schema v0 not supported — update the producer Zap (need v1)`) if this is missing or wrong. Bump in lock-step with `supportedSchemaVersion` in [storage.go](storage.go). |
+| `fetched_at` | Rendered as the disabled `Last fetched: …` line at the bottom of the MR list. |
+| `mrs[].title` | The clickable line in the menu. |
+| `mrs[].url` | Opens in your default browser on click. |
+| `mrs[].project` | Tooltip on hover (e.g. `grp/proj!123`). |
+| `mrs[].author` | Tooltip. |
+| `mrs[].updated_at` | Drives the staleness indicator: `⏰` ≥ 8 h idle, `🔴` ≥ 12 h idle. |
+| `mrs[].created_at` | Tooltip ("Opened: 2026-05-23"). |
+| `mrs[].labels` | Anything containing `asap-review` (case-insensitive) gets the `🚨` prefix in the menu and the menu-bar title. |
+| `mrs[].draft` | Adds `[Draft]` prefix to the MR line. |
 
-A "Set Channel Title & Content in SwiftBar" Zap action remains the simplest way to feed the channel; just use the same Channel UUID here.
+#### Menu rendering
+
+Each MR is shown as one menu item, with prefix markers that compose:
+
+| Marker | Meaning |
+|---|---|
+| 🚨 | MR carries the `asap-review` label |
+| 🔴 | `updated_at` ≥ 12 h ago |
+| ⏰ | `updated_at` ≥ 8 h ago |
+| `[Draft]` | MR is a draft / WIP |
+
+The menu-bar title is `MRs: N`, prefixed with `🚨` if any MR is asap-flagged, or `⚠️` if any MR is stale.
+
+Hover an MR to see author, project, timestamps, labels, and draft status. Click to open the MR in your browser.
 
 ## How it works
 
