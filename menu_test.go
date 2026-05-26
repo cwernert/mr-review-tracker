@@ -67,14 +67,31 @@ func TestMenuTitle(t *testing.T) {
 			"Fix bug",
 		},
 		{
+			// Deliberately bare: a fresh MR with non-asap labels should get
+			// NO marker. Catches accidental wildcard matches on '*-review'.
+			"fresh with needs-review only",
+			MR{Title: "Fix bug", Labels: []string{"needs-review"}, UpdatedAt: refNow.Add(-1 * time.Hour)},
+			"Fix bug",
+		},
+		{
+			"fresh with multiple non-asap labels",
+			MR{Title: "Fix bug", Labels: []string{"needs-review", "backend", "p2"}, UpdatedAt: refNow.Add(-1 * time.Hour)},
+			"Fix bug",
+		},
+		{
 			"asap fresh",
 			MR{Title: "Fix bug", Labels: []string{"asap-review"}, UpdatedAt: refNow.Add(-1 * time.Hour)},
-			"🚨 Fix bug",
+			"⚠️ Fix bug",
+		},
+		{
+			"asap alongside needs-review",
+			MR{Title: "Fix bug", Labels: []string{"needs-review", "asap-review"}, UpdatedAt: refNow.Add(-1 * time.Hour)},
+			"⚠️ Fix bug",
 		},
 		{
 			"stale only",
 			MR{Title: "Old bug", UpdatedAt: refNow.Add(-9 * time.Hour)},
-			"⏰ Old bug",
+			"🟠 Old bug",
 		},
 		{
 			"very stale only",
@@ -84,7 +101,7 @@ func TestMenuTitle(t *testing.T) {
 		{
 			"asap and very stale",
 			MR{Title: "Critical", Labels: []string{"asap-review"}, UpdatedAt: refNow.Add(-24 * time.Hour)},
-			"🚨 🔴 Critical",
+			"⚠️ 🔴 Critical",
 		},
 		{
 			"draft",
@@ -94,7 +111,7 @@ func TestMenuTitle(t *testing.T) {
 		{
 			"asap draft",
 			MR{Title: "Urgent WIP", Labels: []string{"asap-review"}, Draft: true, UpdatedAt: refNow.Add(-1 * time.Hour)},
-			"🚨 [Draft] Urgent WIP",
+			"⚠️ [Draft] Urgent WIP",
 		},
 	}
 	for _, tc := range cases {
@@ -110,6 +127,7 @@ func TestMenuTitle(t *testing.T) {
 func TestBarTitle(t *testing.T) {
 	fresh := MR{UpdatedAt: refNow.Add(-1 * time.Hour)}
 	stale := MR{UpdatedAt: refNow.Add(-9 * time.Hour)}
+	veryStale := MR{UpdatedAt: refNow.Add(-24 * time.Hour)}
 	asap := MR{Labels: []string{"asap-review"}, UpdatedAt: refNow.Add(-1 * time.Hour)}
 
 	cases := []struct {
@@ -119,9 +137,11 @@ func TestBarTitle(t *testing.T) {
 	}{
 		{"none", []MR{}, "MRs: 0"},
 		{"all fresh", []MR{fresh, fresh}, "MRs: 2"},
-		{"one stale", []MR{fresh, stale}, "⚠️ MRs: 2"},
-		{"any asap", []MR{fresh, asap}, "🚨 MRs: 2"},
-		{"asap beats stale", []MR{stale, asap}, "🚨 MRs: 2"},
+		{"one stale", []MR{fresh, stale}, "🟠 MRs: 2"},
+		{"one very stale", []MR{fresh, veryStale}, "🔴 MRs: 2"},
+		{"very stale beats stale", []MR{stale, veryStale}, "🔴 MRs: 2"},
+		{"any asap", []MR{fresh, asap}, "⚠️ MRs: 2"},
+		{"asap beats very stale", []MR{veryStale, asap}, "⚠️ MRs: 2"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

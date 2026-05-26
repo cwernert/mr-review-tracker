@@ -38,11 +38,11 @@
  */
 
 const SCHEMA_VERSION = 1;
-const CHANNEL_SECRET = 'fbdee107-eb6b-47d5-ba86-0aaa8a41b813';
-const STORAGE_URL = 'https://store.zapier.com/api/records';
+const CHANNEL_SECRET = "fbdee107-eb6b-47d5-ba86-0aaa8a41b813";
+const STORAGE_URL = "https://store.zapier.com/api/records";
 const MAX_LABELS_PER_MR = 10;
 
-const { gitlab = '[]', timestamp } = inputData;
+const { gitlab = "[]", timestamp } = inputData;
 
 let mrs;
 try {
@@ -51,37 +51,37 @@ try {
   throw new Error(`Could not parse \`gitlab\` input as JSON: ${err.message}`);
 }
 if (!Array.isArray(mrs)) {
-  throw new Error('`gitlab` input did not parse to an array');
+  throw new Error("`gitlab` input did not parse to an array");
 }
 
 // Whitelisted shape. Any field the Go app does not read is dropped here so
 // Storage by Zapier never balloons with payload we'll never use.
 const slim = mrs.map((mr) => ({
-  title: String(mr.title || ''),
-  url: String(mr.web_url || ''),
-  project: String((mr.references && mr.references.full) || ''),
-  author: String((mr.author && mr.author.username) || ''),
-  author_url: String((mr.author && mr.author.web_url) || ''),
-  updated_at: mr.updated_at || null,
-  created_at: mr.created_at || null,
+  title: String(mr.title ?? ""),
+  url: String(mr.web_url ?? ""),
+  project: String((mr.references && mr.references.full) ?? ""),
+  author: String((mr.author && mr.author.username) ?? ""),
+  author_url: String((mr.author && mr.author.web_url) ?? ""),
+  updated_at: mr.updated_at ?? null,
+  created_at: mr.created_at ?? null,
   labels: Array.isArray(mr.labels) ? mr.labels.slice(0, MAX_LABELS_PER_MR) : [],
-  draft: Boolean(mr.draft || mr.work_in_progress),
+  draft: Boolean(mr.draft ?? mr.work_in_progress),
 }));
 
 const payload = {
   v: SCHEMA_VERSION,
-  fetched_at: timestamp || new Date().toISOString(),
+  fetched_at: timestamp ?? new Date().toISOString(),
   mrs: slim,
 };
 
 const body = JSON.stringify(payload);
 
 const res = await fetch(STORAGE_URL, {
-  method: 'POST',
+  method: "POST",
   headers: {
-    'Content-Type': 'application/json',
-    Accept: 'application/json',
-    'X-SECRET': CHANNEL_SECRET,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    "X-SECRET": CHANNEL_SECRET,
   },
   body,
 });

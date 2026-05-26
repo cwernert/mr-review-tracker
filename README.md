@@ -110,9 +110,9 @@ The app reads from `https://store.zapier.com/api/records?secret=<UUID>` and expe
 | `mrs[].url` | Opens in your default browser on click. |
 | `mrs[].project` | Tooltip on hover (e.g. `grp/proj!123`). |
 | `mrs[].author` | Tooltip. |
-| `mrs[].updated_at` | Drives the staleness indicator: `⏰` ≥ 8 h idle, `🔴` ≥ 12 h idle. |
+| `mrs[].updated_at` | Drives the staleness indicator: `🟠` ≥ 8 h idle, `🔴` ≥ 12 h idle. |
 | `mrs[].created_at` | Tooltip ("Opened: 2026-05-23"). |
-| `mrs[].labels` | Anything containing `asap-review` (case-insensitive) gets the `🚨` prefix in the menu and the menu-bar title. |
+| `mrs[].labels` | Anything containing `asap-review` (case-insensitive) gets the `⚠️` prefix in the menu and the menu-bar title. |
 | `mrs[].draft` | Adds `[Draft]` prefix to the MR line. |
 
 #### Menu rendering
@@ -121,12 +121,12 @@ Each MR is shown as one menu item, with prefix markers that compose:
 
 | Marker | Meaning |
 |---|---|
-| 🚨 | MR carries the `asap-review` label |
+| ⚠️ | MR carries the `asap-review` label |
 | 🔴 | `updated_at` ≥ 12 h ago |
-| ⏰ | `updated_at` ≥ 8 h ago |
+| 🟠 | `updated_at` ≥ 8 h ago |
 | `[Draft]` | MR is a draft / WIP |
 
-The menu-bar title is `MRs: N`, prefixed with `🚨` if any MR is asap-flagged, or `⚠️` if any MR is stale.
+The menu-bar title is `MRs: N`, prefixed with the highest-priority marker present across all MRs: `⚠️` (any asap) wins over `🔴` (any ≥12 h) wins over `🟠` (any ≥8 h).
 
 Hover an MR to see author, project, timestamps, labels, and draft status. Click to open the MR in your browser.
 

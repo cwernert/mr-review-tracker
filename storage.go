@@ -119,22 +119,22 @@ func (m MR) Severity(now time.Time) Severity {
 
 // MenuTitle is the line shown in the menu for this MR. Marker order:
 //
-//	🚨   asap-review label present
+//	⚠️   asap-review label present
 //	🔴   updated_at >= 12h ago (very stale)
-//	⏰   updated_at >= 8h ago  (stale)
+//	🟠   updated_at >=  8h ago (stale)
 //	[Draft]  WIP / draft MR
 //
-// Multiple markers compose, e.g. "🚨 🔴 [Draft] Critical fix".
+// Multiple markers compose, e.g. "⚠️ 🔴 [Draft] Critical fix".
 func (m MR) MenuTitle(now time.Time) string {
 	var b strings.Builder
 	if m.HasAsapLabel() {
-		b.WriteString("🚨 ")
+		b.WriteString("⚠️ ")
 	}
 	switch m.Severity(now) {
 	case SevVeryStale:
 		b.WriteString("🔴 ")
 	case SevStale:
-		b.WriteString("⏰ ")
+		b.WriteString("🟠 ")
 	}
 	if m.Draft {
 		b.WriteString("[Draft] ")
@@ -163,23 +163,31 @@ func (m MR) Tooltip(now time.Time) string {
 }
 
 // barTitle computes the menu-bar title for a list of MRs, prefixing with
-// urgency icons if anything is asap-flagged or stale. asap beats stale.
+// the highest-priority urgency marker present. Priority is:
+//
+//	⚠️   any asap-review-labelled MR
+//	🔴   any MR >= 12h idle
+//	🟠   any MR >=  8h idle
+//	(no prefix) otherwise.
 func barTitle(mrs []MR, now time.Time) string {
-	hasAsap, hasStale := false, false
+	hasAsap := false
+	worstSev := SevNormal
 	for _, mr := range mrs {
 		if mr.HasAsapLabel() {
 			hasAsap = true
 		}
-		if mr.Severity(now) != SevNormal {
-			hasStale = true
+		if s := mr.Severity(now); s > worstSev {
+			worstSev = s
 		}
 	}
 	title := fmt.Sprintf("MRs: %d", len(mrs))
 	switch {
 	case hasAsap:
-		return "🚨 " + title
-	case hasStale:
 		return "⚠️ " + title
+	case worstSev == SevVeryStale:
+		return "🔴 " + title
+	case worstSev == SevStale:
+		return "🟠 " + title
 	default:
 		return title
 	}
