@@ -1,0 +1,122 @@
+name: Release
+
+# Triggered when a vX.Y.Z tag is pushed. Builds the .app bundle on a native
+# runner for each architecture, ad-hoc codesigns it, packages it as a zip
+# with ditto (so resource forks + xattrs are preserved), and attaches both
+# zips to a GitHub Release named after the tag.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag name to build / publish (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: amd64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Verify runner arch matches target
+        run: |
+          set -eu
+          host_arch="$(uname -m | sed 's/x86_64/amd64/')"
+          if [[ "$host_arch" != "${{ matrix.arch }}" ]]; then
+            echo "Runner arch ($host_arch) does not match target (${{ matrix.arch }})" >&2
+            exit 1
+          fi
+
+      - name: Build .app bundle (ad-hoc signed)
+        run: make app ARCH=${{ matrix.arch }}
+
+      - name: Verify codesign + arch
+        run: |
+          set -eu
+          app="dist/${{ matrix.arch }}/MR Review Tracker.app"
+          codesign --verify --verbose=2 "$app"
+          file "$app/Contents/MacOS/mr-review-tracker"
+
+      - name: Package as ditto zip
+        run: make zip ARCH=${{ matrix.arch }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mr-review-tracker-${{ matrix.arch }}
+          path: dist/mr-review-tracker-${{ matrix.arch }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist/
+
+      - name: Resolve tag name
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: ${{ steps.tag.outputs.name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            ## Install
+
+            1. Download the zip for your Mac:
+               - **Apple Silicon (M1/M2/M3/M4):** `mr-review-tracker-arm64.zip`
+               - **Intel:** `mr-review-tracker-amd64.zip`
+            2. Unzip it and drag **MR Review Tracker.app** into `~/Applications` (or `/Applications`).
+            3. **First launch:** right-click the app → **Open** → **Open** in the dialog. macOS only nags once because the binary is ad-hoc signed, not signed with an Apple Developer cert.
+
+            See the [README](https://github.com/cwernert/mr-review-tracker#readme) for usage and configuration.
+          files: |
+            dist/mr-review-tracker-arm64.zip
+            dist/mr-review-tracker-amd64.zip
